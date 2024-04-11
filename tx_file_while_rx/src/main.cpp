@@ -325,9 +325,12 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
         num_total_samps += num_rx_samps;
 
         // Signal writer thread, lock-free
-        bufIdxToWrite = bufIdx;
-        numSamplesToWrite = num_rx_samps;
-        printf("Signalling writer thread -> Buffer [%d]\n", bufIdxToWrite);
+        {
+            std::lock_guard<std::mutex> lk(mtx);
+            bufIdxToWrite = bufIdx;
+            numSamplesToWrite = num_rx_samps;
+            printf("Signalling writer thread -> Buffer [%d]\n", bufIdxToWrite);
+        }
         cv.notify_one();
 
         // Change buffer
