@@ -30,6 +30,7 @@ For the receiver, we want to spawn a second thread that is signalled via a condi
 #include <functional>
 #include <iostream>
 #include <thread>
+#include <condition_variable>
 
 namespace po = boost::program_options;
 
@@ -103,7 +104,7 @@ void transmit_worker(
 
             // send the entire contents of the buffer
             size_t sent = tx_streamer->send(buffptrs, remaining, metadata);
-            printf("========= Sent %zu samples\n", sent);
+            // printf("========= Sent %zu samples\n", sent);
 
             if (sent == remaining)
             {
@@ -134,6 +135,68 @@ void transmit_worker(
 
 
 /***********************************************************************
+ * save_to_file function
+ **********************************************************************/
+template <typename samp_type>
+void save_to_file(
+    const std::string& filename,
+    volatile int& bufIdxToSave,
+    std::vector<std::vector<samp_type>>& buffs,
+    std::vector<std::vector<samp_type>>& buffs2,
+    volatile size_t& numSamplesToWrite,
+    volatile bool& ready,
+    std::condition_variable& cv,
+    std::mutex& mtx
+){
+    try{
+        // Open the file first
+        std::ofstream outfile(filename, std::ios::out | std::ios::binary);
+        if (!outfile.is_open()) {
+            throw std::runtime_error(
+                (boost::format("Could not open file %s") % filename).str());
+        }
+
+        // Signal that we are ready
+        ready = true;
+        printf("Writer thread signalling ready\n");
+        cv.notify_one();
+
+        // Wait in the loop
+        std::unique_lock<std::mutex> lk(mtx); // this is essentially a free lock, since we are not intending to lock from the receiver thread
+        while (! stop_signal_called)
+        {
+            printf("#### Waiting to be signalled for writes..\n");
+            // wait for condition variable to be signalled
+            cv.wait(lk, [&]{return bufIdxToSave >= 0;});
+
+            // write the data
+            if (bufIdxToSave == 0)
+            {
+                outfile.write(reinterpret_cast<char *>(buffs.at(0).data()), numSamplesToWrite);
+                printf("#### Wrote from buffer 0, %zd samples\n", numSamplesToWrite);
+            }
+            else
+            {
+                outfile.write(reinterpret_cast<char *>(buffs2.at(0).data()), numSamplesToWrite);
+                printf("#### Wrote from buffer 1, %zd samples\n", numSamplesToWrite);
+            }
+
+            // Reset
+            bufIdxToSave = -1;
+            lk.unlock();
+        }
+
+        outfile.close();
+
+    }
+    catch(std::runtime_error& e)
+    {
+        printf("Exiting save thread due to exception: %s\n", e.what());
+    }
+}
+
+
+/***********************************************************************
  * recv_to_file function
  **********************************************************************/
 template <typename samp_type>
@@ -144,7 +207,8 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
     size_t samps_per_buff,
     int num_requested_samples,
     double settling_time,
-    std::vector<size_t> rx_channel_nums)
+    std::vector<size_t> rx_channel_nums,
+    bool verbose)
 {
     int num_total_samps = 0;
     // create a receive streamer
@@ -156,6 +220,13 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
     uhd::rx_metadata_t md;
     std::vector<std::vector<samp_type>> buffs(
         rx_channel_nums.size(), std::vector<samp_type>(samps_per_buff));
+    // Create a 2nd buffer for swapping
+    std::vector<std::vector<samp_type>> buffs2(
+        rx_channel_nums.size(), std::vector<samp_type>(samps_per_buff));
+
+    // Define buffer index to track the swapping later
+    int bufIdx = 0;
+
     // create a vector of pointers to point to each of the channel buffers
     std::vector<samp_type*> buff_ptrs;
     for (size_t i = 0; i < buffs.size(); i++) {
@@ -164,19 +235,47 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
 
     // Create one ofstream object per channel
     // (use shared_ptr because ofstream is non-copyable)
-    std::vector<std::shared_ptr<std::ofstream>> outfiles;
-    for (size_t i = 0; i < buffs.size(); i++) {
-        const std::string this_filename = generate_out_filename(file, buffs.size(), i);
-        outfiles.push_back(std::shared_ptr<std::ofstream>(
-            new std::ofstream(this_filename.c_str(), std::ofstream::binary)));
-    }
-    UHD_ASSERT_THROW(outfiles.size() == buffs.size());
-    UHD_ASSERT_THROW(buffs.size() == rx_channel_nums.size());
+    // std::vector<std::shared_ptr<std::ofstream>> outfiles;
+    // for (size_t i = 0; i < buffs.size(); i++) {
+    //     const std::string this_filename = generate_out_filename(file, buffs.size(), i);
+    //     outfiles.push_back(std::shared_ptr<std::ofstream>(
+    //         new std::ofstream(this_filename.c_str(), std::ofstream::binary)));
+    // }
+    // UHD_ASSERT_THROW(outfiles.size() == buffs.size());
+    // UHD_ASSERT_THROW(buffs.size() == rx_channel_nums.size());
     bool overflow_message = true;
     // We increase the first timeout to cover for the delay between now + the
     // command time, plus 500ms of buffer. In the loop, we will then reduce the
     // timeout for subsequent receives.
     double timeout = settling_time + 0.5f;
+
+
+    // Start a new thread to handle writing to disk
+    bool ready = false;
+    std::condition_variable cv;
+    std::mutex mtx;
+    size_t numSamplesToWrite = 0;
+    int bufIdxToWrite = -1;
+    std::thread sthread(
+        save_to_file<samp_type>,
+        file,
+        std::ref(bufIdxToWrite),
+        buffs,
+        buffs2,
+        std::ref(numSamplesToWrite),
+        std::ref(ready),
+        std::ref(cv),
+        std::ref(mtx)
+    );
+
+    // Wait until the newly spawned thread is ready
+    while (!ready) {
+        std::unique_lock<std::mutex> lk(mtx);
+        cv.wait(lk, [&]{return ready;});
+    }
+    printf("Receiver thread received ready signal\n");
+
+
 
     // setup streaming
     uhd::stream_cmd_t stream_cmd((num_requested_samples == 0)
@@ -189,6 +288,15 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
 
     while (not stop_signal_called
            and (num_requested_samples > num_total_samps or num_requested_samples == 0)) {
+
+
+        // set the buffer index to recv into
+        buff_ptrs.at(0) = bufIdx == 0 ? buffs.at(0).data() : buffs2.at(0).data();
+        if (verbose)
+        {
+            printf("====== RX -> Buffer [%d]\n", bufIdx);
+        }
+
         size_t num_rx_samps = rx_stream->recv(buff_ptrs, samps_per_buff, md, timeout);
         timeout             = 0.1f; // small timeout for subsequent recv
 
@@ -216,20 +324,33 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
 
         num_total_samps += num_rx_samps;
 
-        for (size_t i = 0; i < outfiles.size(); i++) {
-            outfiles[i]->write(
-                (const char*)buff_ptrs[i], num_rx_samps * sizeof(samp_type));
-        }
+        // Signal writer thread, lock-free
+        bufIdxToWrite = bufIdx;
+        numSamplesToWrite = num_rx_samps;
+        printf("Signalling writer thread -> Buffer [%d]\n", bufIdxToWrite);
+        cv.notify_one();
+
+        // Change buffer
+        bufIdx = (bufIdx + 1) % 2;
+
+
+        // for (size_t i = 0; i < outfiles.size(); i++) {
+        //     outfiles[i]->write(
+        //         (const char*)buff_ptrs[i], num_rx_samps * sizeof(samp_type));
+        // }
     }
 
     // Shut down receiver
     stream_cmd.stream_mode = uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS;
     rx_stream->issue_stream_cmd(stream_cmd);
 
-    // Close files
-    for (size_t i = 0; i < outfiles.size(); i++) {
-        outfiles[i]->close();
-    }
+    // Close writer thread
+    sthread.join();
+
+    // // Close files
+    // for (size_t i = 0; i < outfiles.size(); i++) {
+    //     outfiles[i]->close();
+    // }
 }
 
 
@@ -239,17 +360,20 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
 int UHD_SAFE_MAIN(int argc, char* argv[])
 {
     // transmit variables to be set by po
-    std::string tx_args, wave_type, tx_ant, tx_subdev, ref, otw, tx_channels;
+    std::string tx_args, tx_ant, tx_subdev, ref, otw;
+    const std::string tx_channels = "0"; // fixed
     double tx_rate, tx_freq, tx_gain, wave_freq, tx_bw;
-    float ampl;
+    // float ampl;
+    std::string txfilename;
 
     // receive variables to be set by po
-    std::string rx_args, file, type, rx_ant, rx_subdev, rx_channels;
+    std::string rx_args, file, type, rx_ant, rx_subdev;
+    const std::string rx_channels = "0"; // fixed
     size_t total_num_samps, spb;
     double rx_rate, rx_freq, rx_gain, rx_bw;
     double settling;
 
-    std::string txfilename;
+    bool verbose;
 
     // setup the program options
     po::options_description desc("Allowed options");
@@ -267,7 +391,6 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
         ("rx-rate", po::value<double>(&rx_rate), "rate of receive incoming samples")
         ("tx-freq", po::value<double>(&tx_freq), "transmit RF center frequency in Hz")
         ("rx-freq", po::value<double>(&rx_freq), "receive RF center frequency in Hz")
-        ("ampl", po::value<float>(&ampl)->default_value(float(0.3)), "amplitude of the waveform [0 to 0.7]")
         ("tx-gain", po::value<double>(&tx_gain), "gain for the transmit RF chain")
         ("rx-gain", po::value<double>(&rx_gain), "gain for the receive RF chain")
         ("tx-ant", po::value<std::string>(&tx_ant), "transmit antenna selection")
@@ -276,15 +399,14 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
         ("rx-subdev", po::value<std::string>(&rx_subdev), "receive subdevice specification")
         ("tx-bw", po::value<double>(&tx_bw), "analog transmit filter bandwidth in Hz")
         ("rx-bw", po::value<double>(&rx_bw), "analog receive filter bandwidth in Hz")
-        // ("wave-type", po::value<std::string>(&wave_type)->default_value("CONST"), "waveform type (CONST, SQUARE, RAMP, SINE)")
-        // ("wave-freq", po::value<double>(&wave_freq)->default_value(0), "waveform frequency in Hz")
         ("txfilename", po::value<std::string>(&txfilename), "filepath of sc16 samples to transmit")
         ("ref", po::value<std::string>(&ref), "reference source (internal, external, gpsdo, mimo)")
-        ("otw", po::value<std::string>(&otw)->default_value("sc16"), "specify the over-the-wire sample mode")
-        ("tx-channels", po::value<std::string>(&tx_channels)->default_value("0"), "which TX channel(s) to use (specify \"0\", \"1\", \"0,1\", etc)")
-        ("rx-channels", po::value<std::string>(&rx_channels)->default_value("0"), "which RX channel(s) to use (specify \"0\", \"1\", \"0,1\", etc)")
+        // ("otw", po::value<std::string>(&otw)->default_value("sc16"), "specify the over-the-wire sample mode")
+        // ("tx-channels", po::value<std::string>(&tx_channels)->default_value("0"), "which TX channel(s) to use (specify \"0\", \"1\", \"0,1\", etc)")
+        // ("rx-channels", po::value<std::string>(&rx_channels)->default_value("0"), "which RX channel(s) to use (specify \"0\", \"1\", \"0,1\", etc)")
         ("tx-int-n", "tune USRP TX with integer-N tuning")
         ("rx-int-n", "tune USRP RX with integer-N tuning")
+        ("verbose", po::bool_switch(&verbose), "verbose output")
     ;
     // clang-format on
     po::variables_map vm;
@@ -339,6 +461,8 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     if (vm.count("ref")) {
         tx_usrp->set_clock_source(ref);
         rx_usrp->set_clock_source(ref);
+        tx_usrp->set_time_source(ref); // also set time source
+        rx_usrp->set_time_source(ref);
     }
 
     std::cout << "Using TX Device: " << tx_usrp->get_pp_string() << std::endl;
@@ -476,24 +600,6 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
         rx_usrp->set_time_unknown_pps(uhd::time_spec_t(0.0));
     }
 
-    // // for the const wave, set the wave freq for small samples per period
-    // if (wave_freq == 0 and wave_type == "CONST") {
-    //     wave_freq = tx_usrp->get_tx_rate() / 2;
-    // }
-    //
-    // // error when the waveform is not possible to generate
-    // if (std::abs(wave_freq) > tx_usrp->get_tx_rate() / 2) {
-    //     throw std::runtime_error("wave freq out of Nyquist zone");
-    // }
-    // if (tx_usrp->get_tx_rate() / std::abs(wave_freq) > wave_table_len / 2) {
-    //     throw std::runtime_error("wave freq too small for table");
-    // }
-    //
-    // // pre-compute the waveform values
-    // const wave_table_class wave_table(wave_type, ampl);
-    // const size_t step = std::lround(wave_freq / tx_usrp->get_tx_rate() * wave_table_len);
-    // size_t index      = 0;
-
     // create a transmit streamer
     // linearly map channels (index0 = channel0, index1 = channel1, ...)
     uhd::stream_args_t stream_args("sc16", otw);
@@ -515,7 +621,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     md.start_of_burst = true;
     md.end_of_burst   = false;
     md.has_time_spec  = true;
-    md.time_spec = uhd::time_spec_t(2.5); // give us 0.5 seconds to fill the tx buffers
+    md.time_spec = uhd::time_spec_t(0.5); // give us 0.5 seconds to fill the tx buffers
 
     // Check Ref and LO Lock detect
     std::vector<std::string> tx_sensor_names, rx_sensor_names;
@@ -589,13 +695,13 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     // recv to file
     if (type == "double")
         recv_to_file<std::complex<double>>(
-            rx_usrp, "fc64", otw, file, spb, total_num_samps, settling, rx_channel_nums);
+            rx_usrp, "fc64", otw, file, spb, total_num_samps, settling, rx_channel_nums, verbose);
     else if (type == "float")
         recv_to_file<std::complex<float>>(
-            rx_usrp, "fc32", otw, file, spb, total_num_samps, settling, rx_channel_nums);
+            rx_usrp, "fc32", otw, file, spb, total_num_samps, settling, rx_channel_nums, verbose);
     else if (type == "short")
         recv_to_file<std::complex<short>>(
-            rx_usrp, "sc16", otw, file, spb, total_num_samps, settling, rx_channel_nums);
+            rx_usrp, "sc16", otw, file, spb, total_num_samps, settling, rx_channel_nums, verbose);
     else {
         // clean up transmit worker
         stop_signal_called = true;
