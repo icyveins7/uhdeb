@@ -10,7 +10,17 @@ int main()
 
     usrp.configure_single_rx_channel(10.0, 1e9, 240e3);
     auto rx_stream = usrp.make_single_rx_stream();
-    std::cout << "rx stream has " << rx_stream->get_num_channels() << " channels" << std::endl;
+
+    // Attempt to start threaded streamer
+    rx_stream->start();
+    rx_stream->start(); // should show it already started
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    rx_stream->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // start again
+    rx_stream->start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    rx_stream->stop();
 
     std::cout << "Complete" << std::endl;
 
