@@ -16,8 +16,10 @@ find_package(UHD REQUIRED)
 
 # UHD include dirs
 message("Including " ${UHD_INCLUDE_DIRS})
+message("Including " ${CMAKE_CURRENT_SOURCE_DIR}/include)
 include_directories(
     ${UHD_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # Boost include dirs
@@ -52,5 +54,6 @@ link_libraries(${UHD_LIBRARIES})
 # Add all individual subdirectories
 add_subdirectory(tx_file_while_rx)
 add_subdirectory(tools)
+add_subdirectory(encapsulation)
 
 
