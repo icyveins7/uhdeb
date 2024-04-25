@@ -31,6 +31,7 @@ For the receiver, we want to spawn a second thread that is signalled via a condi
 #include <iostream>
 #include <thread>
 #include <condition_variable>
+#include <chrono>
 
 namespace po = boost::program_options;
 
@@ -158,35 +159,44 @@ void save_to_file(
 
         // Signal that we are ready
         ready = true;
-        printf("Writer thread signalling ready\n");
+        printf("#### Writer thread signalling ready\n");
         cv.notify_one();
 
         // Wait in the loop
-        std::unique_lock<std::mutex> lk(mtx); // this is essentially a free lock, since we are not intending to lock from the receiver thread
+        /*
+        NOTES:
+        Constructor of unique_lock immediately locks the mutex.
+        cv.wait() immediately unlocks the mutex, blocks until notify_one() + predicate success, then locks the mutex again.
+        As such, you do not need to lock the mutex at the end of the loop.
+        Predicate should also check for stop_signal_called so we can exit cleanly.
+        */
+        std::unique_lock<std::mutex> lk(mtx);
         while (! stop_signal_called)
         {
             printf("#### Waiting to be signalled for writes..\n");
             // wait for condition variable to be signalled
-            cv.wait(lk, [&]{return bufIdxToSave >= 0;});
+            cv.wait(lk, [&]{return bufIdxToSave >= 0 || stop_signal_called;});
+            if (stop_signal_called)
+                break;
 
             // write the data
             if (bufIdxToSave == 0)
             {
-                outfile.write(reinterpret_cast<char *>(buffs.at(0).data()), numSamplesToWrite);
+                outfile.write(reinterpret_cast<char *>(buffs.at(0).data()), numSamplesToWrite*sizeof(samp_type));
                 printf("#### Wrote from buffer 0, %zd samples\n", numSamplesToWrite);
             }
             else
             {
-                outfile.write(reinterpret_cast<char *>(buffs2.at(0).data()), numSamplesToWrite);
+                outfile.write(reinterpret_cast<char *>(buffs2.at(0).data()), numSamplesToWrite*sizeof(samp_type));
                 printf("#### Wrote from buffer 1, %zd samples\n", numSamplesToWrite);
             }
 
             // Reset
             bufIdxToSave = -1;
-            lk.unlock();
         }
 
         outfile.close();
+        printf("#### Writer thread exiting\n");
 
     }
     catch(std::runtime_error& e)
@@ -260,8 +270,8 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
         save_to_file<samp_type>,
         file,
         std::ref(bufIdxToWrite),
-        buffs,
-        buffs2,
+        std::ref(buffs),
+        std::ref(buffs2),
         std::ref(numSamplesToWrite),
         std::ref(ready),
         std::ref(cv),
@@ -292,10 +302,6 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
 
         // set the buffer index to recv into
         buff_ptrs.at(0) = bufIdx == 0 ? buffs.at(0).data() : buffs2.at(0).data();
-        if (verbose)
-        {
-            printf("====== RX -> Buffer [%d]\n", bufIdx);
-        }
 
         size_t num_rx_samps = rx_stream->recv(buff_ptrs, samps_per_buff, md, timeout);
         timeout             = 0.1f; // small timeout for subsequent recv
@@ -324,23 +330,23 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
 
         num_total_samps += num_rx_samps;
 
-        // Signal writer thread, lock-free
+        // Signal writer thread
         {
+            if (verbose)
+                printf("***** RX thread trying to lock mutex\n");
             std::lock_guard<std::mutex> lk(mtx);
+            if (verbose)
+                printf("***** RX thread locked mutex\n");
             bufIdxToWrite = bufIdx;
             numSamplesToWrite = num_rx_samps;
-            printf("Signalling writer thread -> Buffer [%d]\n", bufIdxToWrite);
+            if (verbose)
+                printf("***** Signalling writer thread -> Buffer [%d], %zd samples\n", bufIdxToWrite, num_rx_samps);
         }
         cv.notify_one();
 
         // Change buffer
         bufIdx = (bufIdx + 1) % 2;
 
-
-        // for (size_t i = 0; i < outfiles.size(); i++) {
-        //     outfiles[i]->write(
-        //         (const char*)buff_ptrs[i], num_rx_samps * sizeof(samp_type));
-        // }
     }
 
     // Shut down receiver
@@ -349,11 +355,6 @@ void recv_to_file(uhd::usrp::multi_usrp::sptr usrp,
 
     // Close writer thread
     sthread.join();
-
-    // // Close files
-    // for (size_t i = 0; i < outfiles.size(); i++) {
-    //     outfiles[i]->close();
-    // }
 }
 
 
