@@ -63,8 +63,8 @@ public:
     ~ThreadedRXStreamer()
     {
         // End the thread gracefully
-        m_cv.notify_one(); // we notify in case it is currently waiting
         m_state = ThreadedRXStreamerCmd::EXIT;
+        m_cv.notify_one(); // we notify in case it is currently waiting
 
         m_thread.join();
     }
@@ -86,6 +86,7 @@ public:
     {
         printf("Stopping RX Streamer...\n");
         m_state = ThreadedRXStreamerCmd::STOP;
+        // don't need a notify here since it's in the receive inner loop
     }
 
 private:
