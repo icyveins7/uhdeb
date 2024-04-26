@@ -246,7 +246,10 @@ private:
                     m_buffs_num_samps[m_bufIdx] = m_stream->recv(buff_ptrs, m_max_num_samps, md, timeout);
                     timeout             = 0.1f; // small timeout for subsequent recv
 
-
+                    // if (md.has_time_spec)
+                    // {
+                    //     std::cout << md.time_spec.to_ticks(240e3) << std::endl;
+                    // }
                     // {
                     //     printf("====== RX -> Buffer [%d]: %zd samps\n", m_bufIdx, m_buffs_num_samps[m_bufIdx]);
                     // }
