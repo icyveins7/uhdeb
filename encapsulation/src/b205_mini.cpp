@@ -2,7 +2,7 @@
 
 int main()
 {
-    SingleUSRP_B205mini usrp("");
+    SingleUSRP_B205mini usrp(std::string(""));
 
     usrp.configure_single_tx_channel(30.0, 1e9, 240e3);
     auto tx_stream = usrp.make_single_tx_stream();
