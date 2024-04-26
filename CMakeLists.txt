@@ -12,7 +12,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # and looks up almost every environment variable
 # See https://cmake.org/cmake/help/v3.22/command/find_package.html#search-procedure
 # So this should work as long as any env var points to the UHD install dir
-find_package(UHD REQUIRED)
+# find_package(UHD REQUIRED)
+find_package(UHD)
+
+if (NOT DEFINED ${UHD_INCLUDE_DIRS} OR NOT DEFINED ${UHD_LIBRARIES})
+    # We try to use custom environment variable to resolve instead.
+    # This tends to happen on windows for older UHD versions whose
+    # CMake config files relied on pkg-config.
+    if (DEFINED ENV{UHD_INSTALL_PREFIX})
+        message("Manually setting UHD paths via UHD_INSTALL_PREFIX..")
+        set(UHD_INCLUDE_DIRS $ENV{UHD_INSTALL_PREFIX}/include)
+        find_library(UHD_LIBRARIES NAMES uhd HINTS $ENV{UHD_INSTALL_PREFIX}/lib)
+    else()
+        message(FATAL_ERROR "Couldn't find UHD. Try setting environment variable UHD_INSTALL_PREFIX instead.")
+    endif()
+endif()
 
 # UHD include dirs
 message("Including " ${UHD_INCLUDE_DIRS})
