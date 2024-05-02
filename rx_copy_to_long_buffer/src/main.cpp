@@ -6,7 +6,7 @@ int main()
     SingleUSRP usrp;
     CopyToBuffer<std::complex<short>> processor(10000);
 
-    auto rx_stream = usrp.make_single_rx_stream(30, 1e9, 0, 2.4e6);
+    auto rx_stream = usrp.make_single_rx_stream(30, 1e9, 0, 2.4e6, 0);
 
     rx_stream->start();
 

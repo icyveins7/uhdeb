@@ -52,7 +52,6 @@ public:
                     return (rx_stream->buffer_num_samps(0) > 0) || (rx_stream->buffer_num_samps(1) > 0) ;
                 }
             );
-            printf("Triggered %d\n", i);
 
             // Check which buffer is used
             if ((num_read_samples = rx_stream->buffer_num_samps(0)) > 0)

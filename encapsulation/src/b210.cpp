@@ -4,13 +4,6 @@ int main()
 {
     SingleUSRP_B210 usrp("");
 
-    // There's 2 channels here, test them separately
-    // for (size_t i = 0; i < 2; ++i)
-    // {
-    //     usrp.configure_single_tx_channel(30.0, 1e9, 240e3, i);
-    //     auto tx_stream = usrp.make_single_tx_stream(i);
-    //     std::cout << "tx stream has " << tx_stream->get_num_channels() << " channels" << std::endl;
-    // }
 
     // By default, the antenna is always RX2 instead of TX/RX
     for (size_t i = 0; i < 2; ++i)
@@ -40,8 +33,24 @@ int main()
         std::this_thread::sleep_for(std::chrono::milliseconds(3000));
         rx_stream->stop();
     }
-    //
-    // std::cout << "Complete" << std::endl;
+
+    // Try TX streamers
+    for (size_t i = 0; i < 2; ++i)
+    {
+        auto tx_stream = usrp.make_single_tx_stream(
+            10.0,
+            1e9,
+            0,
+            240e3,
+            i
+        );
+
+        tx_stream->start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        tx_stream->stop();
+    }
+
+    std::cout << "Complete" << std::endl;
 
     return 0;
 }
