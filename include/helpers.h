@@ -98,6 +98,8 @@ public:
     std::condition_variable& get_buffer_cv(){ return m_buffs_cv; }
     size_t& buffer_num_samps(int i){ return m_buffs_num_samps[i]; }
     const std::vector<char>& get_buffer(int i){ return m_buffs[i]; }
+    uhd::usrp::multi_usrp::sptr get_usrp() { return m_usrp; }
+    uhd::stream_args_t& get_stream_args() { return m_stream_args; }
 
 protected:
     std::vector<size_t> m_chnl_nos;
@@ -183,8 +185,12 @@ public:
     {
     }
 
+    uhd::rx_metadata_t& get_metadata(int i){ return m_md[i]; }
+
 
 private:
+    uhd::rx_metadata_t m_md[2];
+
     void create_stream()
     {
         m_stream_args.channels = m_chnl_nos;
@@ -202,9 +208,6 @@ private:
 
         // Create vector of pointers to the buffers
         std::vector<void*> buff_ptrs(1);
-
-        // Create metadata object
-        uhd::rx_metadata_t md;
 
         // Create lock for signalling
         std::unique_lock<std::mutex> lk(m_mtx);
@@ -252,7 +255,7 @@ private:
                     buff_ptrs.at(0) = m_buffs[m_bufIdx].data();
 
                     // write directly into the variable that is signalled out
-                    m_buffs_num_samps[m_bufIdx] = m_stream->recv(buff_ptrs, m_max_num_samps, md, timeout);
+                    m_buffs_num_samps[m_bufIdx] = m_stream->recv(buff_ptrs, m_max_num_samps, m_md[m_bufIdx], timeout);
                     timeout             = 0.1f; // small timeout for subsequent recv
 
                     // if (md.has_time_spec)
@@ -263,11 +266,11 @@ private:
                     //     printf("====== RX -> Buffer [%d]: %zd samps\n", m_bufIdx, m_buffs_num_samps[m_bufIdx]);
                     // }
 
-                    if (md.error_code == uhd::rx_metadata_t::ERROR_CODE_TIMEOUT) {
+                    if (m_md[m_bufIdx].error_code == uhd::rx_metadata_t::ERROR_CODE_TIMEOUT) {
                         std::cout << "Timeout while streaming" << std::endl;
                         break;
                     }
-                    if (md.error_code == uhd::rx_metadata_t::ERROR_CODE_OVERFLOW) {
+                    if (m_md[m_bufIdx].error_code == uhd::rx_metadata_t::ERROR_CODE_OVERFLOW) {
                         if (overflow_message) {
                             overflow_message = false;
                             std::cerr
@@ -281,8 +284,8 @@ private:
                         }
                         continue;
                     }
-                    if (md.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE) {
-                        throw std::runtime_error("Receiver error " + md.strerror());
+                    if (m_md[m_bufIdx].error_code != uhd::rx_metadata_t::ERROR_CODE_NONE) {
+                        throw std::runtime_error("Receiver error " + m_md[m_bufIdx].strerror());
                     }
 
                     // Change buffer

@@ -12,6 +12,7 @@ with the streamer containers in helpers.h.
 
 #include "helpers.h"
 #include "timer.h"
+#include "uhd/types/metadata.hpp"
 
 
 /*
@@ -30,8 +31,15 @@ public:
     CopyToBuffer(size_t size) : m_buffer(size), m_lk(m_mtx) {}
 
     // Handles the copying of data from the streamer to the buffer
+    // This is a blocking call.
     void copy(std::shared_ptr<ThreadedRXStreamer> rx_stream, int max_iter=10)
     {
+        // get the receive rate so we can use it in the tick count
+        double rxrate = rx_stream->get_usrp()->get_rx_rate(
+            rx_stream->get_stream_args().channels.at(0) // get the (assumed) only channel
+        );
+        std::cout << "CopyToBuffer: rxrate: " << rxrate << std::endl;
+
         size_t num_read_samples = 0;
         int target_bufIdx = -1;
 
@@ -62,11 +70,18 @@ public:
                 );
                 std::cout << "buffer " << target_bufIdx << " has " << num_read_samples << " samples" << std::endl;
 
+                // check the metadata time?
+                auto& metadata = rx_stream->get_metadata(target_bufIdx);
+                // if we use the rx_rate as the tick rate, we can see the number of samples
+                std::cout << metadata.time_spec.to_ticks(rxrate) << std::endl;
+
                 // we shift our internal buffer if necessary
                 shift_back(num_read_samples);
 
                 // then copy it in
-                insert_samples(rx_stream->get_buffer(target_bufIdx).data(), num_read_samples);
+                insert_samples(rx_stream->get_buffer(target_bufIdx).data(), 
+                               num_read_samples,
+                               metadata.time_spec.to_ticks(rxrate));
 
                 // reset to 'consume'
                 rx_stream->buffer_num_samps(target_bufIdx) = 0;
@@ -76,7 +91,11 @@ public:
     }
 
     const std::vector<T>& get_buffer() const { return m_buffer; }
-    void reset(){ m_buffer.assign(m_buffer.size(), static_cast<T>(0)); }
+    void reset()
+    {
+        m_buffer_start_tick = 0;
+        m_buffer.assign(m_buffer.size(), static_cast<T>(0)); 
+    }
 
 
 private:
@@ -84,6 +103,7 @@ private:
     std::unique_lock<std::mutex> m_lk;
     std::vector<T> m_buffer;
     size_t m_size_used = 0; // used to keep track of how much space has real data
+    long long m_buffer_start_tick = 0;
 
     // Helper method to ensure that the incoming data will fit in the buffer
     void shift_back(size_t incoming_size)
@@ -101,12 +121,18 @@ private:
 
             // Define the new used value
             m_size_used -= offset_to_move;
+            m_buffer_start_tick += offset_to_move;
         }
     }
 
-    void insert_samples(const void* samples, size_t num_samples)
+    void insert_samples(const void* samples, size_t num_samples, long long ticks)
     {
         printf("CopyToBuffer: Copied %zd samples\n", num_samples);
+
+        // update the start tick if it's the first one
+        if (m_buffer_start_tick == 0)
+            m_buffer_start_tick = ticks;
+
         std::memcpy(
             &m_buffer.at(m_size_used),
             samples,
