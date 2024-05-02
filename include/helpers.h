@@ -48,7 +48,7 @@ public:
         std::string otw_fmt = "sc16"
     ) : m_chnl_nos{chnl_nos}, m_stream_args(cpu_fmt, otw_fmt), m_usrp(usrp)
     {
-        static_cast<T*>(this)->create_stream();
+        impl()->create_stream();
 
         allocate_buffers();
 
@@ -56,7 +56,7 @@ public:
         m_state = ThreadedStreamerCmd::STOP;
         m_thread = std::thread(
             &T::thread_work,
-            static_cast<T*>(this)
+            impl()
         );
     }
 
@@ -97,6 +97,7 @@ public:
     std::mutex& get_buffer_mutex(int i){ return m_buffs_mtx[i]; }
     std::condition_variable& get_buffer_cv(){ return m_buffs_cv; }
     size_t& buffer_num_samps(int i){ return m_buffs_num_samps[i]; }
+    const std::vector<char>& get_buffer(int i){ return m_buffs[i]; }
 
 protected:
     std::vector<size_t> m_chnl_nos;
@@ -115,6 +116,12 @@ protected:
     std::mutex m_mtx; // for control of the thread
     std::condition_variable m_cv; // for control of the thread
     volatile uint8_t m_state = 0;
+
+    // CRTP implementation extractor helper
+    T* impl()
+    {
+        return static_cast<T*>(this);
+    }
 
 
     // This is the method that creates an RX/TX stream in derived classes
@@ -250,7 +257,7 @@ private:
 
                     // if (md.has_time_spec)
                     // {
-                    //     std::cout << md.time_spec.to_ticks(240e3) << std::endl;
+                    //     std::cout << md.time_spec.to_ticks() << std::endl;
                     // }
                     // {
                     //     printf("====== RX -> Buffer [%d]: %zd samps\n", m_bufIdx, m_buffs_num_samps[m_bufIdx]);
@@ -516,7 +523,7 @@ class SingleUSRP
 {
 public:
     SingleUSRP(
-        const uhd::device_addr_t& dev_addr, 
+        const uhd::device_addr_t dev_addr="", 
         const std::string full_tx_subdev_spec = "",
         const std::string full_rx_subdev_spec = "",
         const std::string clock_src = "internal",
@@ -670,7 +677,7 @@ class SingleUSRP_B205mini : public SingleUSRP
 {
 public:
     SingleUSRP_B205mini(
-        const uhd::device_addr_t& dev_addr,
+        const uhd::device_addr_t dev_addr="",
         const std::string clock_src = "internal",
         const std::string time_src = "internal",
         bool verbose = true
@@ -685,7 +692,7 @@ class SingleUSRP_B210 : public SingleUSRP
 {
 public:
     SingleUSRP_B210(
-        const uhd::device_addr_t& dev_addr,
+        const uhd::device_addr_t dev_addr="",
         const std::string clock_src = "internal",
         const std::string time_src = "internal",
         bool verbose = true
