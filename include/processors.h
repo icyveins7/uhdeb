@@ -14,6 +14,15 @@ with the streamer containers in helpers.h.
 #include "timer.h"
 #include "uhd/types/metadata.hpp"
 
+class Processor
+{
+public:
+    Processor() : m_lk(m_mtx) {}
+
+protected:
+    std::mutex m_mtx;
+    std::unique_lock<std::mutex> m_lk;
+};
 
 /*
 Sample class to copy a fixed number of iterations, and accumulate
@@ -25,10 +34,10 @@ but do some processing on the way as well, and store the results instead.
 TODO: maybe refactor out the vector holding / copy method parts separately?
 */
 template <typename T>
-class CopyToBuffer
+class CopyToBuffer : public Processor
 {
 public:
-    CopyToBuffer(size_t size) : m_buffer(size), m_lk(m_mtx) {}
+    CopyToBuffer(size_t size) : Processor(), m_buffer(size) {}
 
     // Handles the copying of data from the streamer to the buffer
     // This is a blocking call.
@@ -98,8 +107,6 @@ public:
 
 
 private:
-    std::mutex m_mtx;
-    std::unique_lock<std::mutex> m_lk;
     std::vector<T> m_buffer;
     size_t m_size_used = 0; // used to keep track of how much space has real data
     long long m_buffer_start_tick = 0;
@@ -140,4 +147,108 @@ private:
         m_size_used += num_samples;
     }
 
+};
+
+
+/*
+This processor attempts to directly copy the receive stream data
+into the transmit stream data. This should work in a timeline as follows:
+
+RX Buffer 0
+XXXXXXXXXXX-----------XXXXXXXXXXX
+                |
+           TX Buffer 0
+
+RX Buffer 1
+-----------XXXXXXXXXXX-----------
+                           |
+                      TX Buffer 1
+
+TX Buffer 0
+***********-----------***********
+     |                     |
+Dummy Data            1st RX Data
+
+TX Buffer 1
+-----------***********-----------***********
+                |                     |
+           Dummy Data            1st RX Data
+
+
+As a processor class, this isn't particularly complicated, but it serves
+as a good demonstration of the possibility of changing TX output quickly
+based on RX input.
+
+NOTE: this class implicitly expects the TX and RX streams to be synchronized in time.
+Otherwise, the above timeline will not be obeyed, and the buffer indices used at a given
+point in time will not necessarily be the same.
+*/
+template <typename T>
+class Rebroadcast : public Processor
+{
+public:
+    // Don't really need a ctor?
+
+    void rebro(
+        std::shared_ptr<ThreadedRXStreamer> rx_stream,
+        std::shared_ptr<ThreadedTXStreamer> tx_stream,
+        int max_iter=100
+    ){
+        size_t num_read_samples = 0;
+        int target_bufIdx = -1;
+
+        auto& cv = rx_stream->get_buffer_cv();
+        for (int i = 0; i < max_iter; i++)
+        {
+            cv.wait(
+                m_lk,
+                [&]{
+                    return (rx_stream->buffer_num_samps(0) > 0) || (rx_stream->buffer_num_samps(1) > 0) ;
+                }
+            );
+
+            // Check which buffer is used
+            if ((num_read_samples = rx_stream->buffer_num_samps(0)) > 0)
+                target_bufIdx = 0;
+            else if ((num_read_samples = rx_stream->buffer_num_samps(1)) > 0)
+                target_bufIdx = 1;
+
+            if (target_bufIdx >= 0 && target_bufIdx < 2)
+            {
+                HighResolutionTimer timer;
+
+                // Lock the correct mutex
+                std::lock_guard<std::mutex> lkg(
+                    rx_stream->get_buffer_mutex(target_bufIdx)
+                );
+                // Similarly for the tx stream
+                std::lock_guard<std::mutex> lkg2(
+                    tx_stream->get_buffer_mutex(target_bufIdx)
+                );
+                std::cout << "buffer " << target_bufIdx << " has " << num_read_samples << " samples" << std::endl;
+
+                // copy directly into the tx buffer
+                if (
+                        tx_stream->get_buffer(target_bufIdx).size() / sizeof(T) ==
+                        num_read_samples
+                ){
+                    std::memcpy(
+                        tx_stream->get_buffer(target_bufIdx).data(),
+                        rx_stream->get_buffer(target_bufIdx).data(),
+                        sizeof(T) * num_read_samples
+                    );
+                }
+                else{
+                    printf("Rebroadcast: Buffer sizes don't match! %zd vs %zd\n"
+                           , tx_stream->get_buffer(target_bufIdx).size()
+                           , num_read_samples
+                        );
+                }
+
+
+                // reset to 'consume'
+                rx_stream->buffer_num_samps(target_bufIdx) = 0;
+            }
+        }
+    }
 };

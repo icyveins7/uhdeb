@@ -402,6 +402,12 @@ private:
                     timeout             = 0.1f; // small timeout for subsequent recv
                     m_md[m_bufIdx].start_of_burst = false;
 
+                    if (m_buffs_num_samps[m_bufIdx] != m_max_num_samps)
+                        printf("Sent %zd of %zd samples\n",
+                               m_buffs_num_samps[m_bufIdx],
+                               m_max_num_samps
+                               );
+
                     // Change buffer
                     m_bufIdx = (m_bufIdx + 1) % 2;
 
