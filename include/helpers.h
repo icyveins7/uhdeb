@@ -603,10 +603,20 @@ public:
     // Helper to get and configure a single RX stream for a single channel in 1 step
     // with some common defaults
     std::shared_ptr<ThreadedRXStreamer> make_single_rx_stream(
+        double gain,
+        double freq_Hz,
+        double rate,
         size_t chnl_no = 0,
         std::string cpu_fmt = "sc16",
         std::string otw_fmt = "sc16"
     ){
+        configure_single_rx_channel(
+            gain,
+            freq_Hz,
+            rate,
+            chnl_no
+        );
+
         return std::make_shared<ThreadedRXStreamer>(
             usrp,
             std::vector<size_t>{chnl_no},
@@ -664,6 +674,19 @@ public:
 };
 
 
+class SingleUSRP_B210 : public SingleUSRP
+{
+public:
+    SingleUSRP_B210(
+        const uhd::device_addr_t& dev_addr,
+        const std::string clock_src = "internal",
+        const std::string time_src = "internal",
+        bool verbose = true
+    ) : SingleUSRP(dev_addr, "A:A A:B", "A:A A:B", clock_src, time_src, verbose)
+    {
+
+    }
+};
 
 
 

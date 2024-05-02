@@ -8,8 +8,7 @@ int main()
     // auto tx_stream = usrp.make_single_tx_stream();
     // std::cout << "tx stream has " << tx_stream->get_num_channels() << " channels" << std::endl;
 
-    usrp.configure_single_rx_channel(10.0, 1e9, 240e3);
-    auto rx_stream = usrp.make_single_rx_stream();
+    auto rx_stream = usrp.make_single_rx_stream(10.0, 1e9, 240e3);
 
     // Attempt to start threaded streamer
     rx_stream->start();
