@@ -183,6 +183,8 @@ private:
         m_stream_args.channels = m_chnl_nos;
         m_stream = m_usrp->get_rx_stream(m_stream_args);
         m_max_num_samps = m_stream->get_max_num_samps();
+
+        printf("Max num samps = %zd\n", m_max_num_samps);
     }
 
     void thread_work()
@@ -605,6 +607,7 @@ public:
     std::shared_ptr<ThreadedRXStreamer> make_single_rx_stream(
         double gain,
         double freq_Hz,
+        double lo_offset_Hz,
         double rate,
         size_t chnl_no = 0,
         std::string cpu_fmt = "sc16",
@@ -613,6 +616,7 @@ public:
         configure_single_rx_channel(
             gain,
             freq_Hz,
+            lo_offset_Hz,
             rate,
             chnl_no
         );
@@ -627,16 +631,19 @@ public:
     void configure_single_rx_channel(
         double gain,
         double freq_Hz,
+        double lo_offset_Hz,
         double rate,
         size_t chnl_no = 0
     ){
-        usrp->set_rx_freq(
-            uhd::tune_request_t(freq_Hz),
+        auto tune_result_t = usrp->set_rx_freq(
+            uhd::tune_request_t(freq_Hz, lo_offset_Hz),
             chnl_no
         );
-        std::cout << boost::format("Actual RX Freq: %f MHz...")
-                         % (usrp->get_rx_freq(chnl_no) / 1e6)
+        std::cout << boost::format("Actual RX RF Freq: %f MHz...")
+                         % (tune_result_t.actual_rf_freq / 1e6)
                   << std::endl
+                  << boost::format("Actual RX DSP Freq: %f MHz...")
+                         % (tune_result_t.actual_dsp_freq / 1e6)
                   << std::endl;
 
         usrp->set_rx_gain(gain, chnl_no);

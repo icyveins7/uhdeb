@@ -12,7 +12,7 @@ int main()
     //     std::cout << "tx stream has " << tx_stream->get_num_channels() << " channels" << std::endl;
     // }
 
-
+    // By default, the antenna is always RX2 instead of TX/RX
     for (size_t i = 0; i < 2; ++i)
     {
         printf("\n\n====== Using channel %zd\n", i);
@@ -24,6 +24,7 @@ int main()
         auto rx_stream = usrp.make_single_rx_stream(
             10.0,
             1e9,
+            50e3,
             240e3,
             i
         );
