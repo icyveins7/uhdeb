@@ -445,7 +445,7 @@ class SingleUSRP
 {
 public:
     SingleUSRP(
-        const uhd::device_addr_t dev_addr="", 
+        const uhd::device_addr_t dev_addr=uhd::device_addr_t(),
         const std::string full_tx_subdev_spec = "",
         const std::string full_rx_subdev_spec = "",
         const std::string clock_src = "internal",
@@ -616,7 +616,7 @@ class SingleUSRP_B205mini : public SingleUSRP
 {
 public:
     SingleUSRP_B205mini(
-        const uhd::device_addr_t dev_addr="",
+        const uhd::device_addr_t dev_addr=uhd::device_addr_t(),
         const std::string clock_src = "internal",
         const std::string time_src = "internal",
         bool verbose = true
@@ -631,7 +631,7 @@ class SingleUSRP_B210 : public SingleUSRP
 {
 public:
     SingleUSRP_B210(
-        const uhd::device_addr_t dev_addr="",
+        const uhd::device_addr_t dev_addr=uhd::device_addr_t(),
         const std::string clock_src = "internal",
         const std::string time_src = "internal",
         bool verbose = true

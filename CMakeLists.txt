@@ -71,3 +71,5 @@ add_subdirectory(tools)
 add_subdirectory(encapsulation)
 add_subdirectory(rx_copy_to_long_buffer)
 add_subdirectory(rebroadcast)
+add_subdirectory(rx_samples_to_file_buffered)
+

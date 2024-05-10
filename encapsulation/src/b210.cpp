@@ -2,7 +2,7 @@
 
 int main()
 {
-    SingleUSRP_B210 usrp("");
+    SingleUSRP_B210 usrp(std::string(""));
 
 
     // By default, the antenna is always RX2 instead of TX/RX
